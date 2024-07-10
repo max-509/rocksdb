@@ -74,9 +74,22 @@ class InlineSkipList {
   explicit InlineSkipList(Comparator cmp, Allocator* allocator,
                           int32_t max_height = 12,
                           int32_t branching_factor = 4);
+
+  explicit InlineSkipList(Comparator cmp, Allocator* allocator,
+                          uint32_t scaled_inverse_branching,
+                          int32_t max_height = 12,
+                          int32_t branching_factor = 4);
+
   // No copying allowed
   InlineSkipList(const InlineSkipList&) = delete;
   InlineSkipList& operator=(const InlineSkipList&) = delete;
+
+  static const char *KeyFromAllocatedKey(const char *keyHandle);
+
+  // Allocates a key and a skip-list node, returning a pointer to the key
+  // portion of the node.  This method is thread-safe if the allocator
+  // is thread-safe.
+  static char* AllocateKey(size_t key_size, uint16_t kMaxHeight, uint32_t kScaledInverseBranching, Allocator *allocator);
 
   // Allocates a key and a skip-list node, returning a pointer to the key
   // portion of the node.  This method is thread-safe if the allocator
@@ -191,6 +204,10 @@ class InlineSkipList {
     // Intentionally copyable
   };
 
+  static int RandomHeight(uint16_t kMaxHeight, uint32_t kScaledInverseBranching);
+
+  static Node* AllocateNode(size_t key_size, int height, Allocator* allocator_);
+
  private:
   const uint16_t kMaxHeight_;
   const uint16_t kBranching_;
@@ -213,10 +230,6 @@ class InlineSkipList {
   inline int GetMaxHeight() const {
     return max_height_.load(std::memory_order_relaxed);
   }
-
-  int RandomHeight();
-
-  Node* AllocateNode(size_t key_size, int height);
 
   bool Equal(const char* a, const char* b) const {
     return (compare_(a, b) == 0);
@@ -267,6 +280,18 @@ class InlineSkipList {
   void RecomputeSpliceLevels(const DecodedKey& key, Splice* splice,
                              int recompute_level);
 };
+template <class Comparator>
+const char* InlineSkipList<Comparator>::KeyFromAllocatedKey(const char *keyHandle) {
+  Node* x = reinterpret_cast<Node*>(const_cast<char*>(keyHandle)) - 1;
+  return x->Key();
+}
+template <class Comparator>
+char* InlineSkipList<Comparator>::AllocateKey(size_t key_size,
+                                              uint16_t kMaxHeight,
+                                              uint32_t kScaledInverseBranching,
+                                              Allocator* allocator) {
+  return const_cast<char*>(AllocateNode(key_size, RandomHeight(kMaxHeight, kScaledInverseBranching), allocator)->Key());
+}
 
 // Implementation details follow
 
@@ -426,17 +451,17 @@ inline void InlineSkipList<Comparator>::Iterator::SeekToLast() {
 }
 
 template <class Comparator>
-int InlineSkipList<Comparator>::RandomHeight() {
+int InlineSkipList<Comparator>::RandomHeight(uint16_t kMaxHeight, uint32_t kScaledInverseBranching) {
   auto rnd = Random::GetTLSInstance();
 
   // Increase height with probability 1 in kBranching
   int height = 1;
-  while (height < kMaxHeight_ && height < kMaxPossibleHeight &&
-         rnd->Next() < kScaledInverseBranching_) {
+  while (height < kMaxHeight && height < kMaxPossibleHeight &&
+         rnd->Next() < kScaledInverseBranching) {
     height++;
   }
   assert(height > 0);
-  assert(height <= kMaxHeight_);
+  assert(height <= kMaxHeight);
   assert(height <= kMaxPossibleHeight);
   return height;
 }
@@ -589,6 +614,31 @@ uint64_t InlineSkipList<Comparator>::EstimateCount(const char* key) const {
 template <class Comparator>
 InlineSkipList<Comparator>::InlineSkipList(const Comparator cmp,
                                            Allocator* allocator,
+                                           uint32_t scaled_inverse_branching,
+                                           int32_t max_height,
+                                           int32_t branching_factor)
+    : kMaxHeight_(static_cast<uint16_t>(max_height)),
+      kBranching_(static_cast<uint16_t>(branching_factor)),
+      kScaledInverseBranching_(scaled_inverse_branching),
+      allocator_(allocator),
+      compare_(cmp),
+      head_(AllocateNode(0, max_height, allocator)),
+      max_height_(1),
+      seq_splice_(AllocateSplice()) {
+  assert(max_height > 0 && kMaxHeight_ == static_cast<uint32_t>(max_height));
+  assert(branching_factor > 1 &&
+         kBranching_ == static_cast<uint32_t>(branching_factor));
+  assert(kScaledInverseBranching_ > 0);
+
+  for (int i = 0; i < kMaxHeight_; ++i) {
+    head_->SetNext(i, nullptr);
+  }
+}
+
+
+template <class Comparator>
+InlineSkipList<Comparator>::InlineSkipList(const Comparator cmp,
+                                           Allocator* allocator,
                                            int32_t max_height,
                                            int32_t branching_factor)
     : kMaxHeight_(static_cast<uint16_t>(max_height)),
@@ -596,7 +646,7 @@ InlineSkipList<Comparator>::InlineSkipList(const Comparator cmp,
       kScaledInverseBranching_((Random::kMaxNext + 1) / kBranching_),
       allocator_(allocator),
       compare_(cmp),
-      head_(AllocateNode(0, max_height)),
+      head_(AllocateNode(0, max_height, allocator)),
       max_height_(1),
       seq_splice_(AllocateSplice()) {
   assert(max_height > 0 && kMaxHeight_ == static_cast<uint32_t>(max_height));
@@ -611,12 +661,12 @@ InlineSkipList<Comparator>::InlineSkipList(const Comparator cmp,
 
 template <class Comparator>
 char* InlineSkipList<Comparator>::AllocateKey(size_t key_size) {
-  return const_cast<char*>(AllocateNode(key_size, RandomHeight())->Key());
+  return AllocateKey(key_size, kMaxHeight_, kScaledInverseBranching_, allocator_);
 }
 
 template <class Comparator>
 typename InlineSkipList<Comparator>::Node*
-InlineSkipList<Comparator>::AllocateNode(size_t key_size, int height) {
+InlineSkipList<Comparator>::AllocateNode(size_t key_size, int height, Allocator* const allocator_) {
   auto prefix = sizeof(std::atomic<Node*>) * (height - 1);
 
   // prefix is space for the height - 1 pointers that we store before
