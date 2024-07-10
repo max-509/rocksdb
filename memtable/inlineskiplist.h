@@ -515,9 +515,9 @@ InlineSkipList<Comparator>::FindGreaterOrEqual(const char* key) const {
   const DecodedKey key_decoded = compare_.decode_key(key);
   while (true) {
     Node* next = x->Next(level);
-    if (next != nullptr) {
-      PREFETCH(next->Next(level), 0, 1);
-    }
+//    if (next != nullptr) {
+//      PREFETCH(next->Next(level), 0, 1);
+//    }
     // Make sure the lists are sorted
     assert(x == head_ || next == nullptr || KeyIsAfterNode(next->Key(), x));
     // Make sure we haven't overshot during our search
