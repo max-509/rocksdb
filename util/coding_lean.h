@@ -59,8 +59,25 @@ inline void EncodeFixed64(char* buf, uint64_t value) {
 // Lower-level versions of Get... that read directly from a character buffer
 // without any bounds checking.
 
+template<bool is_little_endian>
+inline uint8_t DecodeFixed8(const char* ptr) {
+  if (is_little_endian) {
+    // Load the raw bytes
+    uint8_t result;
+    memcpy(&result, ptr, sizeof(result));  // gcc optimizes this to a plain load
+    return result;
+  } else {
+    return static_cast<uint8_t>(static_cast<unsigned char>(ptr[0]));
+  }
+}
+
+inline uint8_t DecodeFixed8(const char* ptr) {
+  return DecodeFixed8<port::kLittleEndian>(ptr);
+}
+
+template<bool is_little_endian>
 inline uint16_t DecodeFixed16(const char* ptr) {
-  if (port::kLittleEndian) {
+  if (is_little_endian) {
     // Load the raw bytes
     uint16_t result;
     memcpy(&result, ptr, sizeof(result));  // gcc optimizes this to a plain load
@@ -71,8 +88,13 @@ inline uint16_t DecodeFixed16(const char* ptr) {
   }
 }
 
+inline uint16_t DecodeFixed16(const char* ptr) {
+  return DecodeFixed16<port::kLittleEndian>(ptr);
+}
+
+template<bool is_little_endian>
 inline uint32_t DecodeFixed32(const char* ptr) {
-  if (port::kLittleEndian) {
+  if (is_little_endian) {
     // Load the raw bytes
     uint32_t result;
     memcpy(&result, ptr, sizeof(result));  // gcc optimizes this to a plain load
@@ -85,8 +107,13 @@ inline uint32_t DecodeFixed32(const char* ptr) {
   }
 }
 
+inline uint32_t DecodeFixed32(const char* ptr) {
+  return DecodeFixed32<port::kLittleEndian>(ptr);
+}
+
+template<bool is_little_endian>
 inline uint64_t DecodeFixed64(const char* ptr) {
-  if (port::kLittleEndian) {
+  if (is_little_endian) {
     // Load the raw bytes
     uint64_t result;
     memcpy(&result, ptr, sizeof(result));  // gcc optimizes this to a plain load
@@ -96,6 +123,10 @@ inline uint64_t DecodeFixed64(const char* ptr) {
     uint64_t hi = DecodeFixed32(ptr + 4);
     return (hi << 32) | lo;
   }
+}
+
+inline uint64_t DecodeFixed64(const char* ptr) {
+  return DecodeFixed64<port::kLittleEndian>(ptr);
 }
 
 }  // namespace ROCKSDB_NAMESPACE

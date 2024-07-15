@@ -741,10 +741,9 @@ bool IndexBlockIter::ParseNextIndexKey() {
 void IndexBlockIter::DecodeCurrentValue(bool is_shared) {
   Slice v(value_.data(), data_ + restarts_ - value_.data());
   // Delta encoding is used if `shared` != 0.
-  Status decode_s __attribute__((__unused__)) = decoded_value_.DecodeFrom(
-      &v, have_first_key_,
-      (value_delta_encoded_ && is_shared) ? &decoded_value_.handle : nullptr);
-  assert(decode_s.ok());
+  assert(decoded_value_.DecodeFrom(
+                           &v, have_first_key_,
+                           (value_delta_encoded_ && is_shared) ? &decoded_value_.handle : nullptr).ok());
   value_ = Slice(value_.data(), v.data() - value_.data());
 
   if (global_seqno_state_ != nullptr) {
@@ -801,6 +800,7 @@ void BlockIter<TValue>::FindKeyAfterBinarySeek(const Slice& target,
     }
     while (true) {
       NextImpl();
+      PREFETCH(data_ + NextEntryOffset(), 0, 1);
       if (!Valid()) {
         // TODO(cbi): per key-value checksum will not be verified in UpdateKey()
         //  since Valid() will returns false.
@@ -839,6 +839,7 @@ bool BlockIter<TValue>::BinarySeek(const Slice& target, uint32_t* index,
   }
 
   *skip_linear_scan = false;
+
   // Loop invariants:
   // - Restart key at index `left` is less than or equal to the target key. The
   //   sentinel index `-1` is considered to have a key that is less than all
@@ -882,6 +883,51 @@ bool BlockIter<TValue>::BinarySeek(const Slice& target, uint32_t* index,
   } else {
     *index = static_cast<uint32_t>(left);
   }
+
+//  const char* restart_points_ptr = data_ + restarts_;
+//  size_t len = num_restarts_;
+//  int cmp = 0;
+//  while (len > 0) {
+//    auto half = len >> 1;
+//
+//    const char* new_left_ptr =
+//        restart_points_ptr + sizeof(uint32_t) * (half >> 1);
+//    const char* new_right_ptr =
+//        restart_points_ptr +
+//        sizeof(uint32_t) * (half + ((len - half - 1) >> 1));
+//    PREFETCH(new_left_ptr, 0, 3);
+//    PREFETCH(new_right_ptr, 0, 3);
+//    uint32_t region_offset =
+//        DecodeFixed32(restart_points_ptr + half * sizeof(uint32_t));
+//    uint32_t shared, non_shared;
+//    const char* key_ptr = DecodeKeyFunc()(
+//        data_ + region_offset, data_ + restarts_, &shared, &non_shared);
+//    if (key_ptr == nullptr || (shared != 0)) {
+//      CorruptionError();
+//      return false;
+//    }
+//    PREFETCH(data_ + DecodeFixed32(new_left_ptr), 0, 1);
+//    PREFETCH(data_ + DecodeFixed32(new_right_ptr), 0, 1);
+//    Slice mid_key(key_ptr, non_shared);
+//    UpdateRawKeyAndMaybePadMinTimestamp(mid_key);
+//    cmp = CompareCurrentKey(target);
+//    int is_le = static_cast<int>(cmp <= 0);
+//    restart_points_ptr += sizeof(uint32_t) * (is_le * (half + 1));
+//    len = is_le * (len - half - 1) + (1 - is_le) * half;
+//  }
+//
+//  *index = (restart_points_ptr - (data_ + restarts_)) / sizeof(uint32_t);
+//  if (cmp == 0) {
+//    *skip_linear_scan = true;
+//  }
+//  if (*index == 0) {
+//    // All keys in the block were strictly greater than `target`. So the very
+//    // first key in the block is the final seek result.
+//    *skip_linear_scan = true;
+//    *index = 1;
+//  }
+//  *index -= 1;
+
   return true;
 }
 

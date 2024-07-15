@@ -393,7 +393,7 @@ class VectorRepFactory : public MemTableRepFactory {
 // skiplist_branching_factor: probabilistic size ratio between adjacent
 //                            link lists in the skiplist
 MemTableRepFactory* NewHashSkipListRepFactory(
-    size_t bucket_count = 1000000, int32_t skiplist_height = 4,
+    size_t bucket_count = 1000000, int32_t skiplist_height = 12,
     int32_t skiplist_branching_factor = 4);
 
 // The factory is to create memtables based on a hash table:
@@ -417,5 +417,23 @@ MemTableRepFactory* NewHashLinkListRepFactory(
     int bucket_entries_logging_threshold = 4096,
     bool if_log_bucket_dist_when_flash = true,
     uint32_t threshold_use_skiplist = 256);
+
+
+// This class contains a fixed array of buckets, each
+// pointing to a skiplist (null if the bucket is empty).
+// Key prefixes must be a non-negative integer values like
+// key in Flink framework. These values are used as bucket indexes.
+// start_keygroup: keygroup start
+// num_keygroups: number of keygroups (bucket size)
+// keygroup_bytes: bytes for extracted prefixes
+// skiplist_height: the max height of the skiplist
+// skiplist_branching_factor: probabilistic size ratio between adjacent
+//                            link lists in the skiplist
+MemTableRepFactory* NewFlinkMemTableRepFactory(
+    size_t start_keygroup,
+    size_t num_keygroups,
+    size_t keygroup_bytes,
+    int32_t skiplist_height = 12,
+    int32_t skiplist_branching_factor = 4);
 
 }  // namespace ROCKSDB_NAMESPACE

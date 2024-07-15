@@ -276,6 +276,7 @@ void IterKey::EnlargeBuffer(size_t key_size) {
   assert(key_size > buf_size_);
   // Need to enlarge the buffer.
   ResetBuffer();
+//  buf_ = static_cast<char *>(malloc(key_size * sizeof(char)));
   buf_ = new char[key_size];
   buf_size_ = key_size;
 }

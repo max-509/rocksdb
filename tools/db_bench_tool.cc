@@ -1811,6 +1811,14 @@ static Status CreateMemTableRepFactory(
     factory->reset(new VectorRepFactory());
   } else if (!strcasecmp(FLAGS_memtablerep.c_str(), "hash_linkedlist")) {
     factory->reset(NewHashLinkListRepFactory(FLAGS_hash_bucket_count));
+  } else if (!strcasecmp(FLAGS_memtablerep.c_str(), "flink_memtable")) {
+    size_t num_keygroups;
+    if (FLAGS_prefix_size == 1) {
+      num_keygroups = 256;
+    } else {
+      num_keygroups = 256 * 256;
+    }
+    factory->reset(NewFlinkMemTableRepFactory(0, num_keygroups, FLAGS_prefix_size));
   } else {
     std::unique_ptr<MemTableRepFactory> unique;
     s = MemTableRepFactory::CreateFromString(config_options, FLAGS_memtablerep,
@@ -4312,6 +4320,11 @@ class Benchmark {
       fprintf(stderr,
               "prefix_size should be non-zero if PrefixHash or "
               "HashLinkedList memtablerep is used\n");
+      exit(1);
+    }
+    if (options.memtable_factory->IsInstanceOf("flink_memtable") && (FLAGS_prefix_size != 1 && FLAGS_prefix_size != 2)) {
+      fprintf(stderr,
+              "prefix_size should be equal 1 or 2 if FlinkMemTable is used\n");
       exit(1);
     }
     if (FLAGS_use_plain_table) {

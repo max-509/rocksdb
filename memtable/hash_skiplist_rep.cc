@@ -6,7 +6,10 @@
 
 #include <atomic>
 
+#include <iostream>
+
 #include "db/memtable.h"
+#include "inlineskiplist.h"
 #include "memory/arena.h"
 #include "memtable/skiplist.h"
 #include "port/port.h"
@@ -26,7 +29,11 @@ class HashSkipListRep : public MemTableRep {
                   size_t bucket_size, int32_t skiplist_height,
                   int32_t skiplist_branching_factor);
 
+  KeyHandle Allocate(const size_t len, char** buf) override;
+
   void Insert(KeyHandle handle) override;
+
+  bool InsertKey(KeyHandle handle) override;
 
   bool Contains(const char* key) const override;
 
@@ -39,17 +46,17 @@ class HashSkipListRep : public MemTableRep {
 
   MemTableRep::Iterator* GetIterator(Arena* arena = nullptr) override;
 
-  MemTableRep::Iterator* GetDynamicPrefixIterator(
-      Arena* arena = nullptr) override;
-
  private:
   friend class DynamicIterator;
-  using Bucket = SkipList<const char*, const MemTableRep::KeyComparator&>;
+//  using Bucket = SkipList<const char *, const MemTableRep::KeyComparator&>;
+  using NonOptimizedSkipList = SkipList<const char *, const MemTableRep::KeyComparator&>;
+  using Bucket = InlineSkipList<const MemTableRep::KeyComparator&>;
 
   size_t bucket_size_;
 
   const int32_t skiplist_height_;
   const int32_t skiplist_branching_factor_;
+  const uint32_t kScaledInverseBranching_;
 
   // Maps slices (which are transformed user keys) to buckets of keys sharing
   // the same transform.
@@ -78,7 +85,7 @@ class HashSkipListRep : public MemTableRep {
 
   class Iterator : public MemTableRep::Iterator {
    public:
-    explicit Iterator(Bucket* list, bool own_list = true,
+    explicit Iterator(NonOptimizedSkipList* list, bool own_list = true,
                       Arena* arena = nullptr)
         : list_(list), iter_(list), own_list_(own_list), arena_(arena) {}
 
@@ -148,7 +155,7 @@ class HashSkipListRep : public MemTableRep {
     }
 
    protected:
-    void Reset(Bucket* list) {
+    void Reset(NonOptimizedSkipList* list) {
       if (own_list_) {
         assert(list_ != nullptr);
         delete list_;
@@ -161,47 +168,13 @@ class HashSkipListRep : public MemTableRep {
    private:
     // if list_ is nullptr, we should NEVER call any methods on iter_
     // if list_ is nullptr, this Iterator is not Valid()
-    Bucket* list_;
-    Bucket::Iterator iter_;
+    NonOptimizedSkipList* list_;
+    NonOptimizedSkipList::Iterator iter_;
     // here we track if we own list_. If we own it, we are also
     // responsible for it's cleaning. This is a poor man's std::shared_ptr
     bool own_list_;
     std::unique_ptr<Arena> arena_;
     std::string tmp_;  // For passing to EncodeKey
-  };
-
-  class DynamicIterator : public HashSkipListRep::Iterator {
-   public:
-    explicit DynamicIterator(const HashSkipListRep& memtable_rep)
-        : HashSkipListRep::Iterator(nullptr, false),
-          memtable_rep_(memtable_rep) {}
-
-    // Advance to the first entry with a key >= target
-    void Seek(const Slice& k, const char* memtable_key) override {
-      auto transformed = memtable_rep_.transform_->Transform(ExtractUserKey(k));
-      Reset(memtable_rep_.GetBucket(transformed));
-      HashSkipListRep::Iterator::Seek(k, memtable_key);
-    }
-
-    // Position at the first entry in collection.
-    // Final state of iterator is Valid() iff collection is not empty.
-    void SeekToFirst() override {
-      // Prefix iterator does not support total order.
-      // We simply set the iterator to invalid state
-      Reset(nullptr);
-    }
-
-    // Position at the last entry in collection.
-    // Final state of iterator is Valid() iff collection is not empty.
-    void SeekToLast() override {
-      // Prefix iterator does not support total order.
-      // We simply set the iterator to invalid state
-      Reset(nullptr);
-    }
-
-   private:
-    // the underlying memtable
-    const HashSkipListRep& memtable_rep_;
   };
 
   class EmptyIterator : public MemTableRep::Iterator {
@@ -236,6 +209,7 @@ HashSkipListRep::HashSkipListRep(const MemTableRep::KeyComparator& compare,
       bucket_size_(bucket_size),
       skiplist_height_(skiplist_height),
       skiplist_branching_factor_(skiplist_branching_factor),
+      kScaledInverseBranching_((Random::kMaxNext + 1) / skiplist_branching_factor_),
       transform_(transform),
       compare_(compare),
       allocator_(allocator) {
@@ -253,10 +227,11 @@ HashSkipListRep::~HashSkipListRep() = default;
 HashSkipListRep::Bucket* HashSkipListRep::GetInitializedBucket(
     const Slice& transformed) {
   size_t hash = GetHash(transformed);
+//  std::cout << "Bucket idx: " << hash << std::endl;
   auto bucket = GetBucket(hash);
   if (bucket == nullptr) {
     auto addr = allocator_->AllocateAligned(sizeof(Bucket));
-    bucket = new (addr) Bucket(compare_, allocator_, skiplist_height_,
+    bucket = new (addr) Bucket(compare_, allocator_, kScaledInverseBranching_, skiplist_height_,
                                skiplist_branching_factor_);
     buckets_[hash].store(bucket, std::memory_order_release);
   }
@@ -265,14 +240,22 @@ HashSkipListRep::Bucket* HashSkipListRep::GetInitializedBucket(
 
 void HashSkipListRep::Insert(KeyHandle handle) {
   auto* key = static_cast<char*>(handle);
-  assert(!Contains(key));
-  auto transformed = transform_->Transform(UserKey(key));
+//  assert(!Contains(key));
+  auto transformed = transform_->Transform(UserKey(Bucket::KeyFromAllocatedKey(key)));
   auto bucket = GetInitializedBucket(transformed);
   bucket->Insert(key);
 }
 
-bool HashSkipListRep::Contains(const char* key) const {
+bool HashSkipListRep::InsertKey(KeyHandle handle) {
+  const auto *key = Bucket::KeyFromAllocatedKey(static_cast<const char *>(handle));
+//  assert(!Contains(key));
   auto transformed = transform_->Transform(UserKey(key));
+  auto bucket = GetInitializedBucket(transformed);
+  return bucket->Insert(static_cast<const char *>(handle));
+}
+
+bool HashSkipListRep::Contains(const char* key) const {
+  auto transformed = transform_->Transform(key);
   auto bucket = GetBucket(transformed);
   if (bucket == nullptr) {
     return false;
@@ -298,7 +281,7 @@ void HashSkipListRep::Get(const LookupKey& k, void* callback_args,
 MemTableRep::Iterator* HashSkipListRep::GetIterator(Arena* arena) {
   // allocate a new arena of similar size to the one currently in use
   Arena* new_arena = new Arena(allocator_->BlockSize());
-  auto list = new Bucket(compare_, new_arena);
+  auto list = new NonOptimizedSkipList(compare_, new_arena);
   for (size_t i = 0; i < bucket_size_; ++i) {
     auto bucket = GetBucket(i);
     if (bucket != nullptr) {
@@ -316,13 +299,10 @@ MemTableRep::Iterator* HashSkipListRep::GetIterator(Arena* arena) {
   }
 }
 
-MemTableRep::Iterator* HashSkipListRep::GetDynamicPrefixIterator(Arena* arena) {
-  if (arena == nullptr) {
-    return new DynamicIterator(*this);
-  } else {
-    auto mem = arena->AllocateAligned(sizeof(DynamicIterator));
-    return new (mem) DynamicIterator(*this);
-  }
+KeyHandle rocksdb::HashSkipListRep::Allocate(const size_t len, char** buf) {
+  *buf = Bucket::AllocateKey(len, skiplist_height_, kScaledInverseBranching_, allocator_);
+  return static_cast<KeyHandle>(*buf);
+//  return MemTableRep::Allocate(len, buf);
 }
 
 struct HashSkipListRepOptions {

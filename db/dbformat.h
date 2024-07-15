@@ -15,6 +15,7 @@
 #include <string>
 #include <utility>
 
+#include "port/malloc.h"
 #include "rocksdb/comparator.h"
 #include "rocksdb/slice.h"
 #include "rocksdb/slice_transform.h"
@@ -627,6 +628,22 @@ class IterKey {
       }
 
       buf_ = p;
+      //      if (buf_ != space_) {
+      // #ifdef ROCKSDB_MALLOC_USABLE_SIZE
+      //        const size_t malloc_buf_size = malloc_usable_size(buf_);
+      // #else   // ROCKSDB_MALLOC_USABLE_SIZE
+      //        const size_t malloc_buf_size = buf_size_;
+      // #endif  // ROCKSDB_MALLOC_USABLE_SIZE
+      //        if (total_size > malloc_buf_size) {
+      //          char* p = static_cast<char*>(malloc(total_size *
+      //          sizeof(char))); memcpy(p, key_, shared_len); free(buf_); buf_
+      //          = p;
+      //        }
+      //      } else {
+      //        char* p = static_cast<char*>(malloc(total_size * sizeof(char)));
+      //        memcpy(p, key_, shared_len);
+      //        buf_ = p;
+      //      }
       buf_size_ = total_size;
     }
 
@@ -827,6 +844,7 @@ class IterKey {
 
   void ResetBuffer() {
     if (buf_ != space_) {
+//      free(buf_);
       delete[] buf_;
       buf_ = space_;
     }
@@ -844,6 +862,15 @@ class IterKey {
     // or the static allocated one, as default
     if (key_size > buf_size_) {
       EnlargeBuffer(key_size);
+//#ifdef ROCKSDB_MALLOC_USABLE_SIZE
+//      if (buf_ != space_ && key_size <= malloc_usable_size(buf_)) {
+//        buf_size_ = key_size;
+//      } else {
+//        EnlargeBuffer(key_size);
+//      }
+//#else   // ROCKSDB_MALLOC_USABLE_SIZE
+//      EnlargeBuffer(key_size);
+//#endif  // ROCKSDB_MALLOC_USABLE_SIZE
     }
   }
 

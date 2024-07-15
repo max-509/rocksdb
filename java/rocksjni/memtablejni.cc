@@ -77,6 +77,51 @@ jlong Java_org_rocksdb_VectorMemTableConfig_newMemTableFactoryHandle(
 }
 
 /*
+ * Class:     org_rocksdb_FlinkMemTableConfig
+ * Method:    newMemTableFactoryHandle
+ * Signature: (JII)J
+ */
+jlong Java_org_rocksdb_FlinkMemTableConfig_newMemTableFactoryHandle(
+    JNIEnv* env, jclass /*jcls*/, jlong jstart_keygroup, jlong jnum_keygroups, jlong jkeygroup_bytes,
+    jint jheight,
+    jint jbranching_factor) {
+  if (jstart_keygroup < 0) {
+    ROCKSDB_NAMESPACE::IllegalArgumentExceptionJni::ThrowNew(env, "Start keygroup must be greater than 0");
+    return 0;
+  }
+  if (jnum_keygroups <= 0) {
+    ROCKSDB_NAMESPACE::IllegalArgumentExceptionJni::ThrowNew(env, "Num keygroups greater must be than 0");
+    return 0;
+  }
+  if (jkeygroup_bytes != 1 && jstart_keygroup != 2) {
+    ROCKSDB_NAMESPACE::IllegalArgumentExceptionJni::ThrowNew(env, "Num bytes for keygroup prefix must be 1 or 2");
+    return 0;
+  }
+  if (jkeygroup_bytes == 1 && jstart_keygroup >= 256) {
+    ROCKSDB_NAMESPACE::IllegalArgumentExceptionJni::ThrowNew(env, "Start keygroup for 1 byte prefix must be less than 256");
+    return 0;
+  }
+  if (jkeygroup_bytes == 1 && jstart_keygroup + jnum_keygroups >= 256) {
+    ROCKSDB_NAMESPACE::IllegalArgumentExceptionJni::ThrowNew(env, "End keygroup for 1 byte prefix must be less than 256");
+    return 0;
+  }
+  if (jkeygroup_bytes == 2 && jstart_keygroup > std::numeric_limits<int16_t>::max()) {
+    ROCKSDB_NAMESPACE::IllegalArgumentExceptionJni::ThrowNew(env, "Start keygroup for 2 byte prefix must be less than 32768");
+    return 0;
+  }
+  if (jkeygroup_bytes == 2 && jstart_keygroup + jnum_keygroups > std::numeric_limits<int16_t>::max()) {
+    ROCKSDB_NAMESPACE::IllegalArgumentExceptionJni::ThrowNew(env, "End keygroup for 2 byte prefix must be less than 32768");
+    return 0;
+  }
+  return GET_CPLUSPLUS_POINTER(ROCKSDB_NAMESPACE::NewFlinkMemTableRepFactory(
+      static_cast<size_t>(jstart_keygroup),
+      static_cast<size_t>(jnum_keygroups),
+      static_cast<size_t>(jkeygroup_bytes),
+      static_cast<int32_t>(jheight),
+      static_cast<int32_t>(jbranching_factor)));
+}
+
+/*
  * Class:     org_rocksdb_SkipListMemTableConfig
  * Method:    newMemTableFactoryHandle0
  * Signature: (J)J
