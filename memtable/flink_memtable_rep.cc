@@ -4,8 +4,9 @@
 //  (found in the LICENSE.Apache file in the root directory).
 //
 
+#ifndef ROCKSDB_LITE
+#include "memtable/flink_memtable_rep.h"
 #include <atomic>
-#include <iostream>
 
 #include "db/memtable.h"
 #include "inlineskiplist.h"
@@ -16,7 +17,6 @@
 #include "rocksdb/slice.h"
 #include "rocksdb/slice_transform.h"
 #include "rocksdb/utilities/options_type.h"
-#include "util/murmurhash.h"
 
 namespace ROCKSDB_NAMESPACE {
 namespace {
@@ -28,7 +28,7 @@ class FlinkMemTableRep : public MemTableRep {
                    size_t num_keygroups, size_t keygroup_bytes,
                    int32_t skiplist_height, int32_t skiplist_branching_factor);
 
-  KeyHandle Allocate(const size_t len, char** buf) override;
+  KeyHandle Allocate(size_t len, char** buf) override;
 
   void Insert(KeyHandle handle) override;
 
@@ -50,15 +50,9 @@ class FlinkMemTableRep : public MemTableRep {
   MemTableRep::Iterator* GetIterator(Arena* arena = nullptr) override;
   uint64_t ApproximateNumEntries(const Slice& slice,
                                  const Slice& slice1) override;
-  void UniqueRandomSample(const uint64_t num_entries,
-                          const uint64_t target_sample_size,
-                          std::unordered_set<const char*>* entries) override;
 
  private:
   friend class DynamicIterator;
-  //  using Bucket = SkipList<const char *, const MemTableRep::KeyComparator&>;
-  using NonOptimizedSkipList =
-      SkipList<const char*, const MemTableRep::KeyComparator&>;
   using Bucket = InlineSkipList<const MemTableRep::KeyComparator&>;
 
   size_t start_keygroup_;
@@ -362,7 +356,6 @@ KeyHandle rocksdb::FlinkMemTableRep::Allocate(const size_t len, char** buf) {
   *buf = Bucket::AllocateKey(len, skiplist_height_, kScaledInverseBranching_,
                              allocator_);
   return static_cast<KeyHandle>(*buf);
-  //  return MemTableRep::Allocate(len, buf);
 }
 uint64_t rocksdb::FlinkMemTableRep::ApproximateNumEntries(const Slice& slice,
                                                           const Slice& slice1) {
@@ -374,76 +367,6 @@ uint64_t rocksdb::FlinkMemTableRep::ApproximateNumEntries(const Slice& slice,
 //  return (end_count >= start_count) ? (end_count - start_count) : 0;
   return MemTableRep::ApproximateNumEntries(slice, slice1);
 }
-void rocksdb::FlinkMemTableRep::UniqueRandomSample(
-    const uint64_t num_entries, const uint64_t target_sample_size,
-    std::unordered_set<const char*>* entries) {
-  // TODO:
-  MemTableRep::UniqueRandomSample(num_entries, target_sample_size, entries);
-}
-
-struct FlinkMemTableRepOptions {
-  static const char* kName() { return "FlinkMemTableRepFactoryOptions"; }
-  size_t start_keygroup;
-  size_t num_keygroups;
-  size_t keygroup_bytes;
-  int32_t skiplist_height;
-  int32_t skiplist_branching_factor;
-};
-
-static std::unordered_map<std::string, OptionTypeInfo> hash_skiplist_info = {
-    {"start_keygroup",
-     {offsetof(struct FlinkMemTableRepOptions, start_keygroup),
-      OptionType::kSizeT, OptionVerificationType::kNormal,
-      OptionTypeFlags::kNone}},
-    {"num_keygroups",
-     {offsetof(struct FlinkMemTableRepOptions, num_keygroups),
-      OptionType::kSizeT, OptionVerificationType::kNormal,
-      OptionTypeFlags::kNone}},
-    {"keygroup_bytes",
-     {offsetof(struct FlinkMemTableRepOptions, keygroup_bytes),
-      OptionType::kSizeT, OptionVerificationType::kNormal,
-      OptionTypeFlags::kNone}},
-    {"skiplist_height",
-     {offsetof(struct FlinkMemTableRepOptions, skiplist_height),
-      OptionType::kInt32T, OptionVerificationType::kNormal,
-      OptionTypeFlags::kNone}},
-    {"branching_factor",
-     {offsetof(struct FlinkMemTableRepOptions, skiplist_branching_factor),
-      OptionType::kInt32T, OptionVerificationType::kNormal,
-      OptionTypeFlags::kNone}},
-};
-
-class FlinkMemTableRepFactory : public MemTableRepFactory {
- public:
-  explicit FlinkMemTableRepFactory(size_t start_keygroup, size_t num_keygroups,
-                                   size_t keygroup_bytes,
-                                   int32_t skiplist_height,
-                                   int32_t skiplist_branching_factor) {
-    options_.start_keygroup = start_keygroup;
-    options_.num_keygroups = num_keygroups;
-    options_.keygroup_bytes = keygroup_bytes;
-    options_.skiplist_height = skiplist_height;
-    options_.skiplist_branching_factor = skiplist_branching_factor;
-    RegisterOptions(&options_, &hash_skiplist_info);
-  }
-
-  using MemTableRepFactory::CreateMemTableRep;
-  MemTableRep* CreateMemTableRep(const MemTableRep::KeyComparator& compare,
-                                 Allocator* allocator,
-                                 const SliceTransform* transform,
-                                 Logger* logger) override;
-
-  static const char* kClassName() { return "FlinkMemTableRepFactory"; }
-  static const char* kNickName() { return "flink_memtable"; }
-
-  const char* Name() const override { return kClassName(); }
-  const char* NickName() const override { return kNickName(); }
-
-  bool IsInsertConcurrentlySupported() const override;
-
- private:
-  FlinkMemTableRepOptions options_;
-};
 
 }  // namespace
 
@@ -451,9 +374,9 @@ MemTableRep* FlinkMemTableRepFactory::CreateMemTableRep(
     const MemTableRep::KeyComparator& compare, Allocator* allocator,
     const SliceTransform* /*transform*/, Logger* /*logger*/) {
   return new FlinkMemTableRep(compare, allocator,
-                              options_.start_keygroup, options_.num_keygroups,
-                              options_.keygroup_bytes, options_.skiplist_height,
-                              options_.skiplist_branching_factor);
+                              start_keygroup_, num_keygroups_,
+                              keygroup_bytes_, skiplist_height_,
+                              skiplist_branching_factor_);
 }
 bool FlinkMemTableRepFactory::IsInsertConcurrentlySupported() const {
   return true;
@@ -468,3 +391,4 @@ MemTableRepFactory* NewFlinkMemTableRepFactory(
 }
 
 }  // namespace ROCKSDB_NAMESPACE
+#endif  // ROCKSDB_LITE

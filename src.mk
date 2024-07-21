@@ -111,6 +111,7 @@ LIB_SOURCES =                                                   \
   memtable/alloc_tracker.cc                                     \
   memtable/hash_linklist_rep.cc                                 \
   memtable/hash_skiplist_rep.cc                                 \
+  memtable/flink_memtable_rep.cc                                \
   memtable/skiplistrep.cc                                       \
   memtable/vectorrep.cc                                         \
   memtable/write_buffer_manager.cc                              \

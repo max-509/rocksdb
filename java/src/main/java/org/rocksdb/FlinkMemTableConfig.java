@@ -136,7 +136,7 @@ public class FlinkMemTableConfig extends MemTableConfig {
         startKeyGroup_, numKeyGroups_, keyGroupBytes_, height_, branchingFactor_);
   }
 
-  private static native long newMemTableFactoryHandle(
+  private native long newMemTableFactoryHandle(
       long startKeyGroup, long numKeyGroups, long keyGroupBytes, int height, int branchingFactor) throws IllegalArgumentException;
 
   private long startKeyGroup_;
