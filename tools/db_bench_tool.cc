@@ -3196,6 +3196,34 @@ class Benchmark {
         }
         block_cache = opts.MakeSharedCache();
       }
+    } else if (FLAGS_cache_type == "lru_cache_2") {
+      LRUCacheOptions2 opts(
+          static_cast<size_t>(capacity), FLAGS_cache_numshardbits,
+          false /*strict_capacity_limit*/, FLAGS_cache_high_pri_pool_ratio,
+          GetCacheAllocator(), kDefaultToAdaptiveMutex,
+          kDefaultCacheMetadataChargePolicy, FLAGS_cache_low_pri_pool_ratio);
+      opts.hash_seed = GetCacheHashSeed();
+      if (use_tiered_cache) {
+        TieredCacheOptions tiered_opts;
+        tiered_opts.cache_type = PrimaryCacheType::kCacheTypeLRU;
+        tiered_opts.cache_opts = &opts;
+        tiered_opts.total_capacity =
+            opts.capacity + secondary_cache_opts.capacity;
+        tiered_opts.compressed_secondary_ratio =
+            secondary_cache_opts.capacity * 1.0 / tiered_opts.total_capacity;
+        tiered_opts.comp_cache_opts = secondary_cache_opts;
+        tiered_opts.nvm_sec_cache = secondary_cache;
+        tiered_opts.adm_policy = adm_policy;
+        block_cache = NewTieredCache(tiered_opts);
+      } else {
+        if (!FLAGS_secondary_cache_uri.empty()) {
+          opts.secondary_cache = secondary_cache;
+        } else if (FLAGS_use_compressed_secondary_cache) {
+          opts.secondary_cache =
+              NewCompressedSecondaryCache(secondary_cache_opts);
+        }
+        block_cache = opts.MakeSharedCache();
+      } 
     } else {
       fprintf(stderr, "Cache type not supported.");
       exit(1);

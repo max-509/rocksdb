@@ -266,6 +266,69 @@ struct LRUCacheOptions : public ShardedCacheOptions {
   std::shared_ptr<RowCache> MakeSharedRowCache() const;
 };
 
+// LRUCache - A cache using LRU eviction to stay at or below a set capacity.
+// The cache is sharded to 2^num_shard_bits shards, by hash of the key.
+// The total capacity is divided and evenly assigned to each shard, and each
+// shard has its own LRU list for evictions. Each shard also has a mutex for
+// exclusive access during operations; even read operations need exclusive
+// access in order to update the LRU list. Mutex contention is usually low
+// with enough shards.
+struct LRUCacheOptions2 : public ShardedCacheOptions {
+  // Ratio of cache reserved for high-priority and low-priority entries,
+  // respectively. (See Cache::Priority below more information on the levels.)
+  // Valid values are between 0 and 1 (inclusive), and the sum of the two
+  // values cannot exceed 1.
+  //
+  // If high_pri_pool_ratio is greater than zero, a dedicated high-priority LRU
+  // list is maintained by the cache. A ratio of 0.5 means non-high-priority
+  // entries will use midpoint insertion. Similarly, if low_pri_pool_ratio is
+  // greater than zero, a dedicated low-priority LRU list is maintained.
+  // There is also a bottom-priority LRU list, which is always enabled and not
+  // explicitly configurable. Entries are spilled over to the next available
+  // lower-priority pool if a certain pool's capacity is exceeded.
+  //
+  // Entries with cache hits are inserted into the highest priority LRU list
+  // available regardless of the entry's priority. Entries without hits
+  // are inserted into highest priority LRU list available whose priority
+  // does not exceed the entry's priority. (For example, high-priority items
+  // with no hits are placed in the high-priority pool if available;
+  // otherwise, they are placed in the low-priority pool if available;
+  // otherwise, they are placed in the bottom-priority pool.) This results
+  // in lower-priority entries without hits getting evicted from the cache
+  // sooner.
+  double high_pri_pool_ratio = 0.5;
+  double low_pri_pool_ratio = 0.0;
+
+  // Whether to use adaptive mutexes for cache shards. Note that adaptive
+  // mutexes need to be supported by the platform in order for this to have any
+  // effect. The default value is true if RocksDB is compiled with
+  // -DROCKSDB_DEFAULT_TO_ADAPTIVE_MUTEX, false otherwise.
+  bool use_adaptive_mutex = kDefaultToAdaptiveMutex;
+
+  LRUCacheOptions2() {}
+  LRUCacheOptions2(size_t _capacity, int _num_shard_bits,
+                  bool _strict_capacity_limit, double _high_pri_pool_ratio,
+                  std::shared_ptr<MemoryAllocator> _memory_allocator = nullptr,
+                  bool _use_adaptive_mutex = kDefaultToAdaptiveMutex,
+                  CacheMetadataChargePolicy _metadata_charge_policy =
+                      kDefaultCacheMetadataChargePolicy,
+                  double _low_pri_pool_ratio = 0.0)
+      : ShardedCacheOptions(_capacity, _num_shard_bits, _strict_capacity_limit,
+                            std::move(_memory_allocator),
+                            _metadata_charge_policy),
+        high_pri_pool_ratio(_high_pri_pool_ratio),
+        low_pri_pool_ratio(_low_pri_pool_ratio),
+        use_adaptive_mutex(_use_adaptive_mutex) {}
+
+  // Construct an instance of LRUCache using these options
+  std::shared_ptr<Cache> MakeSharedCache() const;
+
+  // Construct an instance of LRUCache for use as a row cache, typically for
+  // `DBOptions::row_cache`. Some options are not relevant to row caches.
+  std::shared_ptr<RowCache> MakeSharedRowCache() const;
+};
+
+
 // DEPRECATED wrapper function
 inline std::shared_ptr<Cache> NewLRUCache(
     size_t capacity, int num_shard_bits = -1,
@@ -286,6 +349,30 @@ inline std::shared_ptr<Cache> NewLRUCache(
 inline std::shared_ptr<Cache> NewLRUCache(const LRUCacheOptions& cache_opts) {
   return cache_opts.MakeSharedCache();
 }
+
+// DEPRECATED wrapper function
+inline std::shared_ptr<Cache> NewLRUCache2(
+    size_t capacity, int num_shard_bits = -1,
+    bool strict_capacity_limit = false, double high_pri_pool_ratio = 0.5,
+    std::shared_ptr<MemoryAllocator> memory_allocator = nullptr,
+    bool use_adaptive_mutex = kDefaultToAdaptiveMutex,
+    CacheMetadataChargePolicy metadata_charge_policy =
+        kDefaultCacheMetadataChargePolicy,
+    double low_pri_pool_ratio = 0.0) {
+  return LRUCacheOptions2(capacity, num_shard_bits, strict_capacity_limit,
+                         high_pri_pool_ratio, memory_allocator,
+                         use_adaptive_mutex, metadata_charge_policy,
+                         low_pri_pool_ratio)
+      .MakeSharedCache();
+}
+
+// DEPRECATED wrapper function
+inline std::shared_ptr<Cache> NewLRUCache2(const LRUCacheOptions2& cache_opts) {
+  return cache_opts.MakeSharedCache();
+}
+
+
+
 
 // EXPERIMENTAL
 // Options structure for configuring a SecondaryCache instance with in-memory

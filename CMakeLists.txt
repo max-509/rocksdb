@@ -650,6 +650,7 @@ set(SOURCES
         cache/clock_cache.cc
         cache/compressed_secondary_cache.cc
         cache/lru_cache.cc
+        cache/new_lru_cache/lru_cache_new2.cc
         cache/secondary_cache.cc
         cache/secondary_cache_adapter.cc
         cache/sharded_cache.cc
